@@ -58,7 +58,6 @@ if uploaded_file is not None:
             st.header("1. 字段名修改")
             st.info("提示：输入新字段名则替换，不填则保持原字段名不变。")
             
-            # 使用列布局显示重命名输入框
             rename_inputs = {}
             cols = st.columns(len(existing_fixed_fields) if existing_fixed_fields else 1)
             for i, field in enumerate(existing_fixed_fields):
@@ -66,14 +65,12 @@ if uploaded_file is not None:
                     rename_inputs[field] = st.text_input(f"【{field}】修改为:", placeholder="回车保持原名")
 
             st.header("2. 题目分类标记")
-            st.info("输入格式：直接输入序号（1/2/3），连续多个可用减号（如2-10），多个序号用英文逗号分隔（如 1,3,5）。未填写的题型将不会出现在最终表格中。")
+            st.info("输入格式：直接输入序号（1/2/3），连续多个可用减号（如2-10），多个序号用英文逗号分隔（如 1,3,5）。")
             
-            # 展示题目列表
             st.write(f"**共有 {len(dynamic_fields)} 道题目需要分类：**")
             questions_display = "  |  ".join([f"**{i+1}**.{f}" for i, f in enumerate(dynamic_fields)])
             st.markdown(f"> {questions_display}")
             
-            # 题型输入框
             col1, col2 = st.columns(2)
             with col1:
                 single_input = st.text_input("单选题序号", placeholder="例如: 1,3,5 或 1-10")
@@ -82,7 +79,6 @@ if uploaded_file is not None:
                 multi_input = st.text_input("多选题序号", placeholder="例如: 11,13,15")
                 subj_input = st.text_input("主观题序号", placeholder="例如: 30 或 主观题")
 
-            # 提交按钮
             submitted = st.form_submit_button("开始处理生成报表", type="primary")
 
         if submitted:
@@ -99,7 +95,6 @@ if uploaded_file is not None:
                 indices = set()
                 if not input_str.strip():
                     return []
-                
                 for part in input_str.split(','):
                     part = part.strip()
                     if not part: continue
@@ -113,7 +108,6 @@ if uploaded_file is not None:
                         try:
                             indices.add(int(part))
                         except:
-                            # 尝试按字段名匹配
                             matched = False
                             for idx, field in enumerate(dynamic_fields, 1):
                                 if field == part:
@@ -144,7 +138,6 @@ if uploaded_file is not None:
                 '主观题': parse_input(subj_input, assigned_fields)
             }
 
-            # 动态识别哪些题型有数据
             active_obj_types = [cat for cat in ['单选', '多选', '判断'] if len(category_map[cat]) > 0]
             has_subj = len(category_map['主观题']) > 0
 
@@ -168,10 +161,8 @@ if uploaded_file is not None:
                         cat_score = calc_score(category_map[cat], row)
                         row_data[cat] = cat_score
                         obj_total += cat_score
-                    
                     if active_obj_types:
                         row_data['客观分'] = obj_total
-                    
                     objective_data.append(row_data)
                 df_objective = pd.DataFrame(objective_data, columns=objective_columns)
 
@@ -196,18 +187,13 @@ if uploaded_file is not None:
                 main_data = []
                 for i in range(len(df)):
                     row_data = {f: objective_data[i][f] for f in final_fixed_fields}
-                    
                     for cat in active_obj_types:
                         row_data[cat] = objective_data[i][cat]
-                    
                     for col in category_map['主观题']:
                         row_data[col] = subjective_data[i][col]
-                    
-                    # 计算总分（安全获取客观分和主观分，防止没有这些题型时报错）
                     obj_score = objective_data[i].get('客观分', 0)
                     subj_score = subjective_data[i].get('主观分', 0)
                     row_data['总分'] = obj_score + subj_score
-                    
                     main_data.append(row_data)
                 df_main = pd.DataFrame(main_data, columns=main_columns)
 
@@ -224,11 +210,9 @@ if uploaded_file is not None:
                         row_data['客观分'] = objective_data[i]['客观分']
                     if has_subj: 
                         row_data['主观分'] = subjective_data[i]['主观分']
-                        
                     obj_score = objective_data[i].get('客观分', 0)
                     subj_score = subjective_data[i].get('主观分', 0)
                     row_data['总分'] = obj_score + subj_score
-                    
                     simple_data.append(row_data)
                 df_simple = pd.DataFrame(simple_data, columns=simple_columns)
 
@@ -238,21 +222,33 @@ if uploaded_file is not None:
                 for i in range(len(df)):
                     row_data = {'序号': i + 1}
                     row_data.update({f: objective_data[i][f] for f in final_fixed_fields})
-                    
                     obj_score = objective_data[i].get('客观分', 0)
                     subj_score = subjective_data[i].get('主观分', 0)
                     row_data['总分'] = obj_score + subj_score
                     row_data['备注'] = ''
-                    
                     total_data.append(row_data)
                 df_total = pd.DataFrame(total_data, columns=total_columns)
+
+                # ========== 新增功能：扫描清单数据计算 ==========
+                # 计算逻辑：总行数为应考，总分>0为实考（或者根据业务逻辑，只要有成绩就算实考）
+                total_students = len(df_main)
+                # 实考人数定义：总分大于0的人（可以根据需要调整逻辑，比如判断姓名不为空等）
+                actual_students = len(df_main[df_main['总分'] > 0])
+                absent_students = total_students - actual_students
+
+                scan_columns = ['应考人数', '实考人数', '缺考人数']
+                df_scan = pd.DataFrame([{
+                    '应考人数': total_students,
+                    '实考人数': actual_students,
+                    '缺考人数': absent_students
+                }], columns=scan_columns)
 
                 # ========== 使用openpyxl写入并生成文件流 ==========
                 output = BytesIO()
                 wb = Workbook()
 
                 def write_sheet(ws, title, columns, df_data):
-                    if not columns: # 防止因为没有任何列导致合并单元格报错
+                    if not columns:
                         return
                     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(columns))
                     title_cell = ws.cell(row=1, column=1, value=title)
@@ -271,7 +267,7 @@ if uploaded_file is not None:
                                     val_str = ''
                                 ws.cell(row=row_idx, column=col_idx, value=val_str)
 
-                # 写入5个表
+                # 写入所有表
                 ws1 = wb.active
                 ws1.title = "客观明细表"
                 write_sheet(ws1, original_title, objective_columns, df_objective)
@@ -288,10 +284,14 @@ if uploaded_file is not None:
                 ws5 = wb.create_sheet(title="总分表")
                 write_sheet(ws5, original_title, total_columns, df_total)
 
+                # 写入新增的扫描清单表
+                ws6 = wb.create_sheet(title="扫描清单")
+                write_sheet(ws6, "成绩扫描统计清单", scan_columns, df_scan)
+
                 wb.save(output)
                 processed_data = output.getvalue()
 
-            st.success("🎉 处理完成！未填写的题型已自动在表格中隐藏。请点击下方按钮下载。")
+            st.success("🎉 处理完成！已生成包含“扫描清单”在内的6个表格。")
             
             st.download_button(
                 label="📥 下载综合成绩表.xlsx",
