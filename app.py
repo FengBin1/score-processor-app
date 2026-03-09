@@ -286,7 +286,7 @@ if uploaded_file is not None:
 
                 # 写入新增的扫描清单表
                 ws6 = wb.create_sheet(title="扫描清单")
-                write_sheet(ws6, "成绩扫描统计清单", scan_columns, df_scan)
+                write_sheet(ws6, "扫描清单", scan_columns, df_scan)
 
                 wb.save(output)
                 processed_data = output.getvalue()
@@ -303,3 +303,4 @@ if uploaded_file is not None:
 
     except Exception as e:
         st.error(f"处理文件时发生错误: {e}")
+
