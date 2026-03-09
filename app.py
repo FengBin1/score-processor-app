@@ -66,7 +66,7 @@ if uploaded_file is not None:
                     rename_inputs[field] = st.text_input(f"【{field}】修改为:", placeholder="回车保持原名")
 
             st.header("2. 题目分类标记")
-            st.info("输入格式：直接输入序号（1/2/3），连续多个可用减号（如2-10），多个序号用英文逗号分隔（如 1,3,5）。")
+            st.info("输入格式：直接输入序号（1/2/3），连续多个可用减号（如2-10），多个序号用英文逗号分隔（如 1,3,5）。未填写的题型将不会出现在最终表格中。")
             
             # 展示题目列表
             st.write(f"**共有 {len(dynamic_fields)} 道题目需要分类：**")
@@ -144,83 +144,116 @@ if uploaded_file is not None:
                 '主观题': parse_input(subj_input, assigned_fields)
             }
 
+            # 动态识别哪些题型有数据
+            active_obj_types = [cat for cat in ['单选', '多选', '判断'] if len(category_map[cat]) > 0]
+            has_subj = len(category_map['主观题']) > 0
+
             with st.spinner('正在生成表格，请稍候...'):
-                # ========== 生成数据表的逻辑保持不变 ==========
                 
-                # 客观明细表数据
-                objective_columns = final_fixed_fields + ['单选', '多选', '判断', '客观分']
+                def calc_score(cat_list, row_data_source):
+                    score = 0
+                    for col in cat_list:
+                        val = row_data_source.get(col, '')
+                        if val and str(val).replace('.', '').replace('-', '').isdigit():
+                            score += float(val)
+                    return score
+
+                # ========== 1. 客观明细表数据 ==========
+                objective_columns = final_fixed_fields + active_obj_types + (['客观分'] if active_obj_types else [])
                 objective_data = []
                 for idx, row in df.iterrows():
                     row_data = {f: row.get(f, '') for f in final_fixed_fields}
+                    obj_total = 0
+                    for cat in active_obj_types:
+                        cat_score = calc_score(category_map[cat], row)
+                        row_data[cat] = cat_score
+                        obj_total += cat_score
                     
-                    def calc_score(cat_list):
-                        score = 0
-                        for col in cat_list:
-                            val = row.get(col, '')
-                            if val and str(val).replace('.', '').replace('-', '').isdigit():
-                                score += float(val)
-                        return score
-
-                    row_data['单选'] = calc_score(category_map['单选'])
-                    row_data['多选'] = calc_score(category_map['多选'])
-                    row_data['判断'] = calc_score(category_map['判断'])
-                    row_data['客观分'] = row_data['单选'] + row_data['多选'] + row_data['判断']
+                    if active_obj_types:
+                        row_data['客观分'] = obj_total
+                    
                     objective_data.append(row_data)
-                df_objective = pd.DataFrame(objective_data)
+                df_objective = pd.DataFrame(objective_data, columns=objective_columns)
 
-                # 主观明细表数据
-                subjective_columns = final_fixed_fields + category_map['主观题'] + ['主观分']
+                # ========== 2. 主观明细表数据 ==========
+                subjective_columns = final_fixed_fields + category_map['主观题'] + (['主观分'] if has_subj else [])
                 subjective_data = []
                 for idx, row in df.iterrows():
                     row_data = {f: row.get(f, '') for f in final_fixed_fields}
-                    subj_score = 0
-                    for col in category_map['主观题']:
-                        val = row.get(col, '')
-                        row_data[col] = val
-                        if val and str(val).replace('.', '').replace('-', '').isdigit():
-                            subj_score += float(val)
-                    row_data['主观分'] = subj_score
+                    if has_subj:
+                        subj_score = 0
+                        for col in category_map['主观题']:
+                            val = row.get(col, '')
+                            row_data[col] = val
+                            if val and str(val).replace('.', '').replace('-', '').isdigit():
+                                subj_score += float(val)
+                        row_data['主观分'] = subj_score
                     subjective_data.append(row_data)
-                df_subjective = pd.DataFrame(subjective_data)
+                df_subjective = pd.DataFrame(subjective_data, columns=subjective_columns)
 
-                # 主客观明细表数据
-                main_objective_subjective_columns = final_fixed_fields + ['单选', '多选', '判断'] + category_map['主观题'] + ['总分']
+                # ========== 3. 主客观明细表数据 ==========
+                main_columns = final_fixed_fields + active_obj_types + category_map['主观题'] + ['总分']
                 main_data = []
                 for i in range(len(df)):
-                    row_data = {**objective_data[i]}
-                    del row_data['客观分']
-                    row_data.update({col: subjective_data[i][col] for col in category_map['主观题']})
-                    row_data['总分'] = objective_data[i]['客观分'] + subjective_data[i]['主观分']
+                    row_data = {f: objective_data[i][f] for f in final_fixed_fields}
+                    
+                    for cat in active_obj_types:
+                        row_data[cat] = objective_data[i][cat]
+                    
+                    for col in category_map['主观题']:
+                        row_data[col] = subjective_data[i][col]
+                    
+                    # 计算总分（安全获取客观分和主观分，防止没有这些题型时报错）
+                    obj_score = objective_data[i].get('客观分', 0)
+                    subj_score = subjective_data[i].get('主观分', 0)
+                    row_data['总分'] = obj_score + subj_score
+                    
                     main_data.append(row_data)
-                df_main = pd.DataFrame(main_data)
+                df_main = pd.DataFrame(main_data, columns=main_columns)
 
-                # 主客观简表数据
-                simple_columns = final_fixed_fields + ['客观分', '主观分', '总分']
+                # ========== 4. 主客观简表数据 ==========
+                simple_columns = final_fixed_fields.copy()
+                if active_obj_types: simple_columns.append('客观分')
+                if has_subj: simple_columns.append('主观分')
+                simple_columns.append('总分')
+                
                 simple_data = []
                 for i in range(len(df)):
                     row_data = {f: objective_data[i][f] for f in final_fixed_fields}
-                    row_data['客观分'] = objective_data[i]['客观分']
-                    row_data['主观分'] = subjective_data[i]['主观分']
-                    row_data['总分'] = objective_data[i]['客观分'] + subjective_data[i]['主观分']
+                    if active_obj_types: 
+                        row_data['客观分'] = objective_data[i]['客观分']
+                    if has_subj: 
+                        row_data['主观分'] = subjective_data[i]['主观分']
+                        
+                    obj_score = objective_data[i].get('客观分', 0)
+                    subj_score = subjective_data[i].get('主观分', 0)
+                    row_data['总分'] = obj_score + subj_score
+                    
                     simple_data.append(row_data)
-                df_simple = pd.DataFrame(simple_data)
+                df_simple = pd.DataFrame(simple_data, columns=simple_columns)
 
-                # 总分表数据
+                # ========== 5. 总分表数据 ==========
                 total_columns = ['序号'] + final_fixed_fields + ['总分', '备注']
                 total_data = []
                 for i in range(len(df)):
                     row_data = {'序号': i + 1}
                     row_data.update({f: objective_data[i][f] for f in final_fixed_fields})
-                    row_data['总分'] = objective_data[i]['客观分'] + subjective_data[i]['主观分']
+                    
+                    obj_score = objective_data[i].get('客观分', 0)
+                    subj_score = subjective_data[i].get('主观分', 0)
+                    row_data['总分'] = obj_score + subj_score
                     row_data['备注'] = ''
+                    
                     total_data.append(row_data)
-                df_total = pd.DataFrame(total_data)
+                df_total = pd.DataFrame(total_data, columns=total_columns)
 
                 # ========== 使用openpyxl写入并生成文件流 ==========
                 output = BytesIO()
                 wb = Workbook()
 
                 def write_sheet(ws, title, columns, df_data):
+                    if not columns: # 防止因为没有任何列导致合并单元格报错
+                        return
                     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(columns))
                     title_cell = ws.cell(row=1, column=1, value=title)
                     title_cell.alignment = Alignment(horizontal='center', vertical='center')
@@ -247,7 +280,7 @@ if uploaded_file is not None:
                 write_sheet(ws2, original_title, subjective_columns, df_subjective)
 
                 ws3 = wb.create_sheet(title="主客观明细表")
-                write_sheet(ws3, original_title, main_objective_subjective_columns, df_main)
+                write_sheet(ws3, original_title, main_columns, df_main)
 
                 ws4 = wb.create_sheet(title="主客观简表")
                 write_sheet(ws4, original_title, simple_columns, df_simple)
@@ -258,7 +291,7 @@ if uploaded_file is not None:
                 wb.save(output)
                 processed_data = output.getvalue()
 
-            st.success("🎉 处理完成！请点击下方按钮下载最终的成绩表。")
+            st.success("🎉 处理完成！未填写的题型已自动在表格中隐藏。请点击下方按钮下载。")
             
             st.download_button(
                 label="📥 下载综合成绩表.xlsx",
